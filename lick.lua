@@ -2,7 +2,6 @@
 --
 -- simple LIVECODING environment for Löve
 -- overwrites love.run, pressing all errors to the terminal/console or overlays it
-print('hello, world')
 local lick = {}
 lick.main = "main.lua"
 lick.conf = "conf.lua"
