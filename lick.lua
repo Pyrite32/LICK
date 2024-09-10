@@ -2,18 +2,23 @@
 --
 -- simple LIVECODING environment for Löve
 -- overwrites love.run, pressing all errors to the terminal/console or overlays it
-
+print('hello, world')
 local lick = {}
-lick.file = "main.lua"
+lick.main = "main.lua"
+lick.conf = "conf.lua"
 lick.debug = false
 lick.reset = false
 lick.clearFlag = false
 lick.sleepTime = love.graphics.newCanvas and 0.001 or 1
 lick.showReloadMessage = true
+lick.sourceDirectory = 'src'
 
 local drawok_old, updateok_old, loadok_old
 local last_modified = 0
 local debugoutput = nil
+local last_modified_file_list = 0
+
+local fileList = {}
 
 -- Error handler wrapping for pcall
 local function handle(err)
@@ -25,13 +30,76 @@ local function load()
     last_modified = 0
 end
 
-local function checkFileUpdate()
-    local info = love.filesystem.getInfo(lick.file)
-    if not info or last_modified >= info.modtime then
+---comment
+---@param ... unknown
+---@return unknown
+local function combinePath(a, b)
+    return a .. '/' .. b
+end
+
+---comment
+---@param directoryStr string
+---@param fileInfoTable table
+---@return nil
+local function populateFileList(directoryStr, fileInfoTable)
+    -- does path exist?
+    local info = love.filesystem.getInfo(lick.sourceDirectory);
+    if not info or info.type ~= 'directory' then
+        print("sourceDirectory: " .. lick.sourceDirectory .. " is not a directory!")
         return
     end
-    last_modified = info.modtime
-    local success, chunk = pcall(love.filesystem.load, lick.file)
+
+    local childFilesAndDirectories = love.filesystem.getDirectoryItems(directoryStr)
+
+    for _, value in ipairs(childFilesAndDirectories) do
+        local info = love.filesystem.getInfo(combinePath(directoryStr, value))
+        if info then
+            if info.type == 'directory' then
+                local path = combinePath(directoryStr, value)
+                populateFileList(path, fileInfoTable)
+            else
+                local path = combinePath(directoryStr, value)
+                table.insert(fileInfoTable, { path = path, info = info })
+            end
+        end
+    end
+end
+
+
+local function checkFileUpdate()
+
+    local mainFileInfo = love.filesystem.getInfo(lick.main)
+    if not mainFileInfo then
+        print("could not find the file " .. lick.main)
+        return
+    end
+
+    local confFileInfo = love.filesystem.getInfo(lick.conf)
+    if not confFileInfo then
+        print("could not find the file " .. lick.conf)
+        return
+    end
+
+    local file_recently_changed = last_modified < mainFileInfo.modtime or
+        last_modified < confFileInfo.modtime
+
+    if not file_recently_changed then
+        for _, file in ipairs(fileList) do
+            if file then
+                if last_modified < file.info.modtime then
+                    file_recently_changed = true
+                    last_modified = file.info.modtime
+                    break
+                end
+            end
+        end
+        if not file_recently_changed then return end -- no files changed.
+    else
+        -- either main or conf recently changed.
+        last_modified = math.max(mainFileInfo.modtime, confFileInfo.modtime)
+    end
+
+    local success, chunk = pcall(love.filesystem.load, lick.main)
     if not success then
         print(tostring(chunk))
         debugoutput = chunk .. "\n"
@@ -65,6 +133,16 @@ end
 
 local function update(dt)
     checkFileUpdate()
+
+    last_modified_file_list = last_modified_file_list + dt
+    if last_modified_file_list >= 1.0 then
+        last_modified_file_list = 0
+        for k, _ in pairs(fileList) do
+            fileList[k] = nil
+        end
+        populateFileList(lick.sourceDirectory, fileList)
+    end
+
     local updateok, err = pcall(love.update, dt)
     if not updateok and not updateok_old then
         print("ERROR: " .. tostring(err))
