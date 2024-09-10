@@ -16,6 +16,7 @@ local drawok_old, updateok_old, loadok_old
 local last_modified = 0
 local debugoutput = nil
 local last_modified_file_list = 0
+local first_load = true;
 
 local fileList = {}
 
@@ -29,9 +30,71 @@ local function load()
     last_modified = 0
 end
 
----comment
----@param ... unknown
----@return unknown
+-- Removes all references to a module.
+-- Do not call unrequire on a shared library based module unless you are 100% confidant that nothing uses the module anymore.
+-- @param m Name of the module you want removed.
+-- @return Returns true if all references were removed, false otherwise.
+-- @return If returns false, then this is an error message describing why the references weren't removed.
+local function unrequire(m, n)
+    if _G[n] then 
+        print('removing upvalue ' .. n)
+        print(' with value ' .. tostring(_G[n]))
+        _G[n] = nil
+        _G[m] = nil
+    else
+        print("cannot delete upvalue '" .. n .. "' because it doesn't exist.")
+    end
+
+    if package.loaded[m] then
+        print('removing package')
+        print(' with value ' .. tostring(package.loaded[m]))
+        package.loaded[m] = nil
+    else
+        print('failed to remove package ' .. m)
+    end
+	
+    -- Search for the shared library handle in the registry and erase it
+	local registry = debug.getregistry()
+	local nMatches, mKey, mt = 0, nil, registry["_LOADLIB"]
+
+	for key, ud in pairs(registry) do
+		if type(key) == "string" and string.find(key, "LOADLIB: .*" .. m) and type(ud) == "userdata" and getmetatable(ud) == mt then
+			nMatches = nMatches + 1
+			if nMatches > 1 then
+				return false, "More than one possible key for module '" .. m .. "'. Can't decide which one to erase."
+			end
+
+			mKey = key
+		end
+	end
+
+	if mKey then
+		registry[mKey] = nil
+	end
+
+	return true
+end
+
+function findLastOccurrence(str, pattern)
+    local lastPos = nil
+    local start = 1
+
+    while true do
+        local s, e = string.find(str, pattern, start)
+        if s then
+            lastPos = e
+            start = e + 1
+        else
+            break
+        end
+    end
+
+    return lastPos
+end
+
+---combines two parts of a path
+---@param ... string
+---@return string
 local function combinePath(a, b)
     return a .. '/' .. b
 end
@@ -60,6 +123,23 @@ local function populateFileList(directoryStr, fileInfoTable)
                 local path = combinePath(directoryStr, value)
                 table.insert(fileInfoTable, { path = path, info = info })
             end
+        end
+    end
+end
+
+local function unloadAll()
+    print('unloading modules...')
+    for index, value in ipairs(fileList) do
+        if value and value.path then
+            local _start, _end = string.find(value.path, '.lua') 
+            local path = value.path
+            local name = value.path
+            if _start and _end then
+                path = string.sub(path, 0, _start - 1)  
+                local name_start = findLastOccurrence(name, '/') + 1 or 0
+                name = string.sub(name, name_start, _start - 1)
+            end
+            unrequire(path, name)
         end
     end
 end
@@ -97,6 +177,15 @@ local function checkFileUpdate()
         -- either main or conf recently changed.
         last_modified = math.max(mainFileInfo.modtime, confFileInfo.modtime)
     end
+
+    if first_load then
+        -- prevent reloading without actively saving changes.
+        first_load = false
+    else
+        unloadAll()
+    end
+    -- unrequire all of the modules in src (library code is OK)
+
 
     local success, chunk = pcall(love.filesystem.load, lick.main)
     if not success then
