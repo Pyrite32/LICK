@@ -37,8 +37,6 @@ end
 -- @return If returns false, then this is an error message describing why the references weren't removed.
 local function unrequire(m, n)
     if _G[n] then 
-        print('removing upvalue ' .. n)
-        print(' with value ' .. tostring(_G[n]))
         _G[n] = nil
         _G[m] = nil
     else
@@ -46,8 +44,6 @@ local function unrequire(m, n)
     end
 
     if package.loaded[m] then
-        print('removing package')
-        print(' with value ' .. tostring(package.loaded[m]))
         package.loaded[m] = nil
     else
         print('failed to remove package ' .. m)
